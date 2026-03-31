@@ -37,17 +37,49 @@ RESOURCE_ID = os.environ.get("MAINLAYER_RESOURCE_ID", "")
 
 
 async def require_payment(x_mainlayer_token: str = Header(...)):
-    access = await ml.resources.verify_access(RESOURCE_ID, x_mainlayer_token)
-    if not access.authorized:
+    """Verify payment token for real estate data access.
+
+    Returns 402 if payment required, 503 if verification fails.
+    """
+    if not x_mainlayer_token or not x_mainlayer_token.strip():
         raise HTTPException(
             status_code=402,
             detail={
                 "error": "payment_required",
-                "message": "This endpoint is billed per query. Get access at mainlayer.fr",
-                "payment_url": "https://mainlayer.fr",
+                "message": "This endpoint is billed per query. Get access at https://api.mainlayer.fr/pay",
+                "price_usdc": 0.02,
+                "payment_url": "https://api.mainlayer.fr/pay",
+                "resource_id": RESOURCE_ID,
             },
         )
-    return access
+
+    try:
+        access = await ml.resources.verify_access(RESOURCE_ID, x_mainlayer_token)
+        if not access.authorized:
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "payment_required",
+                    "message": "Payment required for real estate data. Retry after paying.",
+                    "price_usdc": 0.02,
+                    "payment_url": "https://api.mainlayer.fr/pay",
+                    "resource_id": RESOURCE_ID,
+                },
+            )
+        return access
+    except HTTPException:
+        raise
+    except Exception as err:
+        # Network or API error — fail closed
+        import logging
+        logging.error("Payment verification failed: %s", str(err))
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "service_unavailable",
+                "message": "Payment verification unavailable. Please retry.",
+            },
+        )
 
 
 def _to_summary(raw: dict) -> dict:
